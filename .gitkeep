@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sky Dash - Quick Catch Game</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #0b1026, #1b2b5b 60%, #1f3b73);
+        color: #f7f8ff;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .game-shell {
+        width: min(920px, 92vw);
+        background: rgba(9, 13, 32, 0.88);
+        border-radius: 24px;
+        padding: 28px;
+        box-shadow: 0 30px 60px rgba(5, 8, 20, 0.45);
+      }
+
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      h1 {
+        font-size: 1.7rem;
+        margin: 0;
+      }
+
+      .stats {
+        display: flex;
+        gap: 18px;
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+
+      .panel {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 240px;
+        gap: 24px;
+      }
+
+      canvas {
+        width: 100%;
+        height: 420px;
+        background: radial-gradient(circle at top, #233a76, #15224c 70%);
+        border-radius: 18px;
+        display: block;
+        box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.06);
+      }
+
+      .controls {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        background: rgba(255, 255, 255, 0.04);
+        padding: 18px;
+        border-radius: 18px;
+        line-height: 1.4;
+      }
+
+      .controls button {
+        border: none;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        background: #f8b75b;
+        color: #232014;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .controls button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 18px rgba(248, 183, 91, 0.35);
+      }
+
+      .instructions {
+        font-size: 0.9rem;
+        color: rgba(247, 248, 255, 0.78);
+      }
+
+      .legend {
+        display: grid;
+        gap: 8px;
+        font-size: 0.85rem;
+        color: rgba(247, 248, 255, 0.72);
+      }
+
+      .legend span {
+        font-weight: 600;
+        color: #fff;
+      }
+
+      @media (max-width: 720px) {
+        .panel {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          height: 320px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="game-shell">
+      <header>
+        <div>
+          <h1>Sky Dash</h1>
+          <div class="instructions">Catch falling stars. Dodge the storm clouds.</div>
+        </div>
+        <div class="stats">
+          <div>Score: <span id="score">0</span></div>
+          <div>Streak: <span id="streak">0</span></div>
+          <div>Time: <span id="time">30</span>s</div>
+        </div>
+      </header>
+      <section class="panel">
+        <canvas id="game" width="640" height="420" aria-label="Sky Dash game"></canvas>
+        <aside class="controls">
+          <button id="start">Start Run</button>
+          <div class="legend">
+            <div><span>Move:</span> Arrow keys or A / D</div>
+            <div><span>Goal:</span> Catch ⭐ stars for points.</div>
+            <div><span>Avoid:</span> ☁ clouds or you lose streak.</div>
+            <div><span>Bonus:</span> Long streaks raise the multiplier.</div>
+          </div>
+          <div class="instructions" id="status">
+            Tap start to launch a 30 second run. Stars fall faster over time, so stay sharp!
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const startButton = document.getElementById("start");
+      const scoreEl = document.getElementById("score");
+      const streakEl = document.getElementById("streak");
+      const timeEl = document.getElementById("time");
+      const statusEl = document.getElementById("status");
+
+      const player = {
+        x: canvas.width / 2,
+        y: canvas.height - 42,
+        width: 70,
+        height: 20,
+        speed: 7,
+      };
+
+      let entities = [];
+      let score = 0;
+      let streak = 0;
+      let timeLeft = 30;
+      let running = false;
+      let lastSpawn = 0;
+      let lastTick = 0;
+      let animationId = null;
+      let multiplier = 1;
+
+      const keys = new Set();
+
+      const resetGame = () => {
+        entities = [];
+        score = 0;
+        streak = 0;
+        multiplier = 1;
+        timeLeft = 30;
+        player.x = canvas.width / 2;
+        updateHud();
+      };
+
+      const updateHud = () => {
+        scoreEl.textContent = score;
+        streakEl.textContent = streak;
+        timeEl.textContent = timeLeft;
+      };
+
+      const spawnEntity = (elapsed) => {
+        if (elapsed - lastSpawn < 600) {
+          return;
+        }
+        lastSpawn = elapsed;
+        const isStar = Math.random() > 0.32;
+        const size = isStar ? 22 : 26;
+        entities.push({
+          x: Math.random() * (canvas.width - size) + size / 2,
+          y: -size,
+          size,
+          speed: 2.6 + Math.random() * 1.8 + (30 - timeLeft) * 0.08,
+          type: isStar ? "star" : "cloud",
+        });
+      };
+
+      const updatePlayer = () => {
+        if (keys.has("ArrowLeft") || keys.has("a")) {
+          player.x -= player.speed;
+        }
+        if (keys.has("ArrowRight") || keys.has("d")) {
+          player.x += player.speed;
+        }
+        player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, player.x));
+      };
+
+      const updateEntities = () => {
+        entities.forEach((entity) => {
+          entity.y += entity.speed;
+        });
+        entities = entities.filter((entity) => entity.y < canvas.height + 40);
+      };
+
+      const checkCollisions = () => {
+        entities = entities.filter((entity) => {
+          const hit =
+            entity.x > player.x - player.width / 2 &&
+            entity.x < player.x + player.width / 2 &&
+            entity.y + entity.size / 2 > player.y &&
+            entity.y - entity.size / 2 < player.y + player.height;
+
+          if (!hit) {
+            return true;
+          }
+
+          if (entity.type === "star") {
+            streak += 1;
+            multiplier = Math.min(5, 1 + Math.floor(streak / 4));
+            score += 10 * multiplier;
+            statusEl.textContent = `Great catch! ${multiplier}x multiplier.`;
+          } else {
+            streak = 0;
+            multiplier = 1;
+            statusEl.textContent = "Cloud hit! Streak reset.";
+          }
+
+          updateHud();
+          return false;
+        });
+      };
+
+      const drawPlayer = () => {
+        ctx.fillStyle = "#f8b75b";
+        ctx.beginPath();
+        ctx.roundRect(player.x - player.width / 2, player.y, player.width, player.height, 10);
+        ctx.fill();
+      };
+
+      const drawEntity = (entity) => {
+        if (entity.type === "star") {
+          ctx.fillStyle = "#fce97c";
+          ctx.beginPath();
+          ctx.moveTo(entity.x, entity.y - entity.size / 2);
+          ctx.lineTo(entity.x + entity.size / 4, entity.y + entity.size / 2);
+          ctx.lineTo(entity.x - entity.size / 2, entity.y - entity.size / 10);
+          ctx.lineTo(entity.x + entity.size / 2, entity.y - entity.size / 10);
+          ctx.lineTo(entity.x - entity.size / 4, entity.y + entity.size / 2);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.fillStyle = "rgba(236, 244, 255, 0.85)";
+          ctx.beginPath();
+          ctx.ellipse(entity.x, entity.y, entity.size / 1.6, entity.size / 2.4, 0, 0, Math.PI * 2);
+          ctx.ellipse(entity.x - entity.size / 2.2, entity.y + 4, entity.size / 2.2, entity.size / 2.8, 0, 0, Math.PI * 2);
+          ctx.ellipse(entity.x + entity.size / 2.2, entity.y + 6, entity.size / 2.1, entity.size / 2.6, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      };
+
+      const draw = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "rgba(10, 16, 40, 0.35)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        entities.forEach(drawEntity);
+        drawPlayer();
+      };
+
+      const tick = (timestamp) => {
+        if (!running) {
+          return;
+        }
+        if (!lastTick) {
+          lastTick = timestamp;
+        }
+        const elapsed = timestamp - lastTick;
+
+        if (elapsed >= 1000) {
+          timeLeft = Math.max(0, timeLeft - 1);
+          lastTick = timestamp;
+          updateHud();
+
+          if (timeLeft === 0) {
+            running = false;
+            statusEl.textContent = `Run complete! Final score: ${score}.`;
+            startButton.textContent = "Play Again";
+            return;
+          }
+        }
+
+        spawnEntity(timestamp);
+        updatePlayer();
+        updateEntities();
+        checkCollisions();
+        draw();
+
+        animationId = requestAnimationFrame(tick);
+      };
+
+      startButton.addEventListener("click", () => {
+        if (running) {
+          return;
+        }
+        resetGame();
+        running = true;
+        lastTick = 0;
+        lastSpawn = 0;
+        startButton.textContent = "Running...";
+        statusEl.textContent = "Catch those stars!";
+        animationId = requestAnimationFrame(tick);
+      });
+
+      window.addEventListener("keydown", (event) => {
+        keys.add(event.key.toLowerCase());
+      });
+
+      window.addEventListener("keyup", (event) => {
+        keys.delete(event.key.toLowerCase());
+      });
+
+      draw();
+    </script>
+  </body>
+</html>
